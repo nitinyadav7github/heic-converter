@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -158,7 +159,7 @@
       min-width: 140px;
     }
     .setting label { color: var(--muted); white-space: nowrap; }
-    .setting select, .setting input[type="range"] {
+    .setting select {
       background: transparent;
       border: none;
       color: var(--text);
@@ -169,12 +170,31 @@
       cursor: pointer;
     }
     .setting select option { background: #1a1a1a; }
-    .quality-val {
-      font-family: 'Space Mono', monospace;
+
+    /* Quality pill buttons */
+    .quality-pills {
+      display: flex;
+      gap: 6px;
+      flex: 1;
+    }
+    .q-pill {
+      flex: 1;
+      padding: 4px 0;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
       font-size: 12px;
-      color: var(--accent);
-      min-width: 32px;
-      text-align: right;
+      font-family: 'Space Mono', monospace;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      text-align: center;
+    }
+    .q-pill.active {
+      background: var(--accent);
+      color: #0f0f0f;
+      border-color: var(--accent);
     }
 
     /* ── Queue ── */
@@ -313,19 +333,21 @@
     .convert-btn:not(:disabled):active { transform: scale(0.98); }
 
     .dl-all-btn {
-      padding: 16px 20px;
+      width: 100%;
+      padding: 16px;
       background: var(--surface);
       color: var(--accent);
-      font-size: 14px;
-      font-weight: 600;
-      border: 1px solid var(--accent);
+      font-size: 15px;
+      font-weight: 700;
+      border: 1.5px solid var(--accent);
       border-radius: var(--radius);
       cursor: pointer;
-      white-space: nowrap;
-      transition: transform 0.1s, opacity 0.2s;
+      transition: transform 0.1s, opacity 0.2s, background 0.15s;
+      letter-spacing: 0.02em;
     }
-    .dl-all-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    .dl-all-btn:not(:disabled):active { transform: scale(0.97); }
+    .dl-all-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+    .dl-all-btn:not(:disabled):hover { background: #1e2a00; }
+    .dl-all-btn:not(:disabled):active { transform: scale(0.98); }
 
     /* ── Stats ── */
     .stats-bar {
@@ -451,8 +473,11 @@
       </div>
       <div class="setting">
         <label>Quality</label>
-        <input type="range" id="quality" min="0.5" max="1" step="0.05" value="0.92" />
-        <span class="quality-val" id="quality-val">92%</span>
+        <div class="quality-pills">
+          <button class="q-pill" data-val="0.75">75%</button>
+          <button class="q-pill active" data-val="0.90">90%</button>
+          <button class="q-pill" data-val="1.00">100%</button>
+        </div>
       </div>
     </div>
 
@@ -475,8 +500,8 @@
     <!-- Convert & Download All -->
     <div class="convert-row" id="convert-row" style="display:none">
       <button class="convert-btn" id="convert-btn">Convert All</button>
-      <button class="dl-all-btn" id="dl-all-btn" disabled>⬇ All</button>
     </div>
+    <button class="dl-all-btn" id="dl-all-btn" disabled>⬇ Download All as ZIP</button>
 
     <!-- File list -->
     <div id="queue-section" style="display:none">
@@ -490,6 +515,7 @@
 
   <!-- heic2any from CDN (cached by SW) -->
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script>
     // ── State ────────────────────────────────────────────────
     const files = [];   // { file, id, status, blob, url, origSize }
@@ -507,12 +533,14 @@
     const convertRow  = document.getElementById('convert-row');
     const statsBar    = document.getElementById('stats-bar');
     const fmtSelect   = document.getElementById('fmt-select');
-    const qualityEl   = document.getElementById('quality');
-    const qualityVal  = document.getElementById('quality-val');
-
-    // ── Quality slider ────────────────────────────────────────
-    qualityEl.addEventListener('input', () => {
-      qualityVal.textContent = Math.round(qualityEl.value * 100) + '%';
+    // ── Quality pills ─────────────────────────────────────────
+    let selectedQuality = 0.90;
+    document.querySelectorAll('.q-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.q-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedQuality = parseFloat(btn.dataset.val);
+      });
     });
 
     // ── Drag & drop ───────────────────────────────────────────
@@ -620,7 +648,7 @@
           const resultBlob = await heic2any({
             blob: item.file,
             toType: fmtSelect.value,
-            quality: parseFloat(qualityEl.value),
+            quality: selectedQuality,
             multiple: false
           });
           const blob = Array.isArray(resultBlob) ? resultBlob[0] : resultBlob;
@@ -640,15 +668,32 @@
       dlAllBtn.disabled = files.filter(f => f.status === 'done').length === 0;
     }
 
-    // ── Download All ──────────────────────────────────────────
-    dlAllBtn.addEventListener('click', () => {
+    // ── Download All as ZIP ───────────────────────────────────
+    dlAllBtn.addEventListener('click', async () => {
+      const done = files.filter(f => f.status === 'done');
+      if (!done.length) return;
+
+      dlAllBtn.disabled = true;
+      dlAllBtn.textContent = '⏳ Zipping…';
+
       const ext = fmtSelect.value === 'image/jpeg' ? 'jpg' : fmtSelect.value === 'image/png' ? 'png' : 'webp';
-      files.filter(f => f.status === 'done').forEach(item => {
-        const a = document.createElement('a');
-        a.href = item.url;
-        a.download = item.file.name.replace(/\.(heic|heif)$/i, '.' + ext);
-        a.click();
-      });
+      const zip = new JSZip();
+
+      for (const item of done) {
+        const fname = item.file.name.replace(/\.(heic|heif)$/i, '.' + ext);
+        zip.file(fname, item.blob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 } });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `converted-photos-${done.length}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+      dlAllBtn.textContent = '⬇ Download All as ZIP';
+      dlAllBtn.disabled = false;
     });
 
     // ── Clear ─────────────────────────────────────────────────
