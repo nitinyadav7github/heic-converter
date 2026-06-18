@@ -1,57 +1,38 @@
-// sw.js — Service Worker for offline HEIC→JPG converter
-const CACHE = 'heic-jpg-v1';
+const CACHE = 'heic-jpg-v2';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',
+  'https://cdn.jsdelivr.net/npm/heic-to@1.4.2/dist/iife/heic-to.js',
   'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
   'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap'
 ];
 
-// Install: cache all assets
 self.addEventListener('install', e => {
   self.skipWaiting();
-  e.waitUntil(
-    caches.open(CACHE).then(cache => {
-      // Cache core files, don't fail on CDN errors
-      return Promise.allSettled(ASSETS.map(url => cache.add(url)));
-    })
-  );
+  e.waitUntil(caches.open(CACHE).then(c => Promise.allSettled(ASSETS.map(u => c.add(u)))));
 });
 
-// Activate: delete old caches
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
-// Fetch: cache-first strategy
 self.addEventListener('fetch', e => {
-  // Skip non-GET and chrome-extension requests
   if (e.request.method !== 'GET') return;
-  if (e.request.url.startsWith('chrome-extension://')) return;
-  if (e.request.url.startsWith('blob:')) return;
-
+  if (e.request.url.startsWith('chrome-extension://') || e.request.url.startsWith('blob:')) return;
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
-      return fetch(e.request).then(response => {
-        // Cache valid responses
-        if (response && response.status === 200 && response.type !== 'opaque') {
-          const clone = response.clone();
-          caches.open(CACHE).then(cache => cache.put(e.request, clone));
+      return fetch(e.request).then(res => {
+        if (res && res.status === 200 && res.type !== 'opaque') {
+          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
         }
-        return response;
-      }).catch(() => {
-        // Offline fallback for navigation
-        if (e.request.mode === 'navigate') {
-          return caches.match('./index.html');
-        }
-      });
+        return res;
+      }).catch(() => e.request.mode === 'navigate' ? caches.match('./index.html') : undefined);
     })
   );
 });
